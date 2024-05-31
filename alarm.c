@@ -9,13 +9,8 @@
 
 #define TRUE 1
 #define FALSE 0
-
-//TODO: open/close/read/write
-// 2 threads, one for buttons, second for reading taster?
-// interrupt and asynchronous signal -> exit the app TODO: change file 
-
-FILE *pft = NULL;
-
+#define START_F 1
+#define STOP_F 2
 #define BUFF 20
 #define FIVE_MIN_TO_MS 5*60*1000
 
@@ -36,16 +31,20 @@ enum States 	{INIT = 0,
 enum States state = STOP;
 enum Buttons buttons = MODE_BUTTON;
 
-unsigned char check_button = 1;
-unsigned long long int initial_timer_value = 0;
+FILE *pft = NULL;
+
+unsigned char mode_bit = START_F; // used to change START/STOP
+unsigned char check_button = 1; //
+//unsigned long long int last_value = 0; //
 int en_init = 1;
 char mode = 'p';
+// asynchronous signal
 int gotsignal=0;
 struct sigaction action;
 int fd;
+// threads:
 pthread_t thread_id; 
 pthread_t thread2_id;
-
 
 
 void sighandler(int signo)
@@ -68,18 +67,13 @@ int print_term(char *msg) {
 unsigned long long int decode(char *buff) {
 	unsigned long long int timer_value = 0;
 	for(int i = 0; i < 8; ++i) {
-
 		timer_value +=(unsigned long long int)buff[i] << (i*8); //56-i*8
-		// Debug if needed!
-		//iprintf("suma = %llu\n", timer_value);
-		//printf("buff[%d] = %d\n", i, buff[i]);
 	}
 	return timer_value;
 }
 
 unsigned long long int read_timer_driver() {
 	freopen("/dev/timer", "r+", pft);
-	//fseek(pft, 0, SEEK_SET);
 	unsigned long long int timer_value = 0;
 	size_t len = 8;
     	if(pft == NULL) {
@@ -89,69 +83,54 @@ unsigned long long int read_timer_driver() {
 	char *buff = (char*) malloc(len+1);
 
 	getline(&buff, &len, pft);
-	//fgets(buff, len, pft);
 	if(ferror(pft))
 		print_term("Error in reading from file: /dev/timer");	
 	timer_value = decode(buff);
-	// Debug if needed!
-	//fprintf(stdout, "read_timer_driver timer_value = %llu\n", timer_value);
 	free(buff);
-	//fclose(pft);
 	return timer_value/100000;
 }
 
 int write_timer_driver(char mode, unsigned int timer_value) {
 	freopen("/dev/timer", "w", pft);
-	//fseek(pft, 0, SEEK_SET);
-	//pft = fopen("/dev/timer", "w+");
 	if(pft == NULL) {
 		fprintf(stderr, "failed to open file! [/dev/timer");
         return -1;
     }
     fprintf(pft, "%c,%u,%d", mode, timer_value, en_init);
-    //fclose(pft);
 }
 
 void increment_timer(char mode) { 
     unsigned long long int timer_value = 0;
     timer_value = read_timer_driver();
-    //fprintf(stdout, "Before increment: %llu\n", timer_value);
     timer_value += 10*1000;
-    //timer_value = timer_value - FIVE_MIN_TO_MS;
-    //fprintf(stdout, "Increment timer: %llu\n", timer_value);
     write_timer_driver(mode, timer_value);
-    timer_value = read_timer_driver();
-    //fprintf(stdout, "After writing to timer: %llu\n", timer_value);
 }
 
 void decrement_timer(char mode) { 
     unsigned long long int timer_value = 0;
-    timer_value = read_timer_driver();
-    //timer_value = timer_value - FIVE_MIN_TO_MS;
+    timer_value = read_timer_driver(); 
     if(timer_value >= 10*1000)
-        timer_value -= 10*1000;
+	timer_value -= 10*1000;
     else
-	    timer_value = 0;
+	timer_value = 0;
     write_timer_driver(mode, timer_value);
 }
 
 void start_stop_timer(char mode) {
     unsigned int timer_value = 0;
-    //TODO: check if reading is needed even, write mode,-1 
-    //      so it fails the write in driver
     timer_value = read_timer_driver();
     timer_value = timer_value;
     write_timer_driver(mode, timer_value);
 }
 
 void print_time() {
-	//fflush(pft);
 	unsigned long long int timer_value = read_timer_driver();
 	unsigned int ms = 0;
 	unsigned int sec = 0;
 	unsigned int min = 0;
 	unsigned int hh = 0;
-
+	
+	//convert counter value to time format
 	ms = timer_value;
 	sec = ms / 1000;
 	min = sec / 60;
@@ -162,7 +141,8 @@ void print_time() {
 	hh %= 24;
 
     if(isatty(fileno(stdin))) { 
-        fprintf(stdout, "%2d:%2d:%2d:%3d", hh, min, sec, ms);
+	system("clear");
+        fprintf(stdout, "%2d:%2d:%2d:%2d", hh, min, sec, ms);
     }
 	else
         fprintf(stderr, "Could not output to terminal, file descriptor %d", fileno(stdin));
@@ -207,7 +187,6 @@ int read_button(void) {
 		check_button = 0;
 		buttons = EXIT_BUTTON;
 	}
-	//if(!check_button) buttons = BUTTON_NOT_PRESSED;
 	
 	free(button);
     
@@ -215,10 +194,17 @@ int read_button(void) {
 }
 
 void change_state(void) {
-        if(buttons == MODE_BUTTON) {
+        if(buttons == MODE_BUTTON && mode_bit == START_F) {
+            mode_bit = STOP_F;
             state = START;
 	    buttons = BUTTON_NOT_PRESSED;
 	}
+        else
+        if(buttons == MODE_BUTTON && mode_bit == STOP_F) {
+            mode_bit = START_F;
+            state = STOP;
+            buttons = BUTTON_NOT_PRESSED;
+        }
         else
         if(buttons == DECREMENT_BUTTON) {
             state = DECREMENT;
@@ -243,7 +229,6 @@ void *thread_check_keyboard(void *vargp) {
 	while(TRUE) {
 		usleep(1000);
 		getchar();
-		//system("pause");  
 		print_time();
 	}
 	return NULL;
@@ -253,19 +238,14 @@ void *thread_check_button(void *vargp) {
 	while(TRUE) {
 		if (gotsignal)
 			state = EXIT;
-	    		//return 0;		
 		switch (state) {
 		    case INIT:
-			// initially pause the timer and set value to 0
-			system("clear");
 			mode = 'p';
-			write_timer_driver(mode, 0);
-			initial_timer_value = read_timer_driver();	
+			write_timer_driver(mode, 0); // time 0 at start
 			print_time();
 			break;
 		    case START:
 			mode = 's';
-			initial_timer_value = read_timer_driver();
 			en_init = 0;
 			start_stop_timer(mode);
 			break;
@@ -283,7 +263,6 @@ void *thread_check_button(void *vargp) {
 			fclose(pft);
 			pthread_cancel(thread2_id);
 			pthread_exit(NULL);
-			//return 0;
 			break;
 		    case DO_NOTHING:	
 			usleep(1000);
@@ -295,15 +274,14 @@ void *thread_check_button(void *vargp) {
 		read_button();
 		change_state();
 		fflush(stdout);
-		//fflush(pft);
 
 	}
 	return NULL;
 }
 
 int main(void) {
-    pft = fopen("/dev/timer", "r+");
-    fd = open("/dev/timer",O_RDONLY|O_NONBLOCK);
+    pft = fopen("/dev/timer", "r+"); // initialize FILE pointer for timer device
+    fd = open("/dev/timer",O_RDONLY|O_NONBLOCK); // used for asynchronous signaling
     if (!fd)
     {
 	exit(1);
@@ -319,14 +297,12 @@ int main(void) {
     en_init = 1;
     state = INIT;
 
-    pthread_create(&thread2_id, NULL, thread_check_keyboard, NULL);
-    pthread_create(&thread_id, NULL, thread_check_button, NULL);
+    pthread_create(&thread2_id, NULL, thread_check_keyboard, NULL); // thread for printing time
+    pthread_create(&thread_id, NULL, thread_check_button, NULL); // thread for managing app
     pthread_join(thread_id, NULL);
     pthread_join(thread2_id, NULL);
 
     pthread_cancel(thread_id);
     
-    //while(TRUE) {
-    //    } 
     return 0;
 }

@@ -27,9 +27,6 @@
 #define XIL_AXI_TIMER_TLR1_OFFSET 	0x14 // timer1 LR
 #define XIL_AXI_TIMER_TCR1_OFFSET 	0x18 // timer1 CR
 
-//TODO: define timer1 TCSR, TLR, TCR registers
-//TODO: implement bitmask for cascade mode operation of timer (bit 11 of TCSR)
-
 #define XIL_AXI_TIMER_CSR_CASC_MASK		0x00000800
 #define XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK	0x00000400
 #define XIL_AXI_TIMER_CSR_ENABLE_PWM_MASK	0x00000200
@@ -154,6 +151,7 @@ static irqreturn_t xilaxitimer_isr(int irq,void*dev_id)
 //TODO: use this function to initialize timer so it starts countint and use it only when OPEN is used
 static void setup_timer(unsigned long long int milliseconds)
 {
+	// Disable Timer Counter
 	unsigned int timer_load0;
 	unsigned int timer_load1;
 	unsigned int data = 0;
@@ -164,10 +162,6 @@ static void setup_timer(unsigned long long int milliseconds)
  
 	timer_load0 = (unsigned int) (0x00000000ffffffff & ((initial_value - milliseconds)*100000));
 	timer_load1 = (unsigned int) ((0xffffffff00000000 & ((initial_value - milliseconds)*100000)) >> 32);
-
-	printk(KERN_INFO "setup_timer: miliseconds %llu", milliseconds);
-	printk(KERN_INFO "setup_timer: timer_load0 %u", timer_load0);
-	printk(KERN_INFO "setup_timer: timer_load1 %u", timer_load1);
 
 	// Set initial value in load register0
 	iowrite32(timer_load0, tp->base_addr + XIL_AXI_TIMER_TLR_OFFSET);
@@ -193,15 +187,6 @@ static void setup_timer(unsigned long long int milliseconds)
 	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR1_OFFSET);
 	iowrite32(data & ~(XIL_AXI_TIMER_CSR_LOAD_MASK),
 			tp->base_addr + XIL_AXI_TIMER_TCSR1_OFFSET);
-
-	cnt00 = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR_OFFSET);
-	cnt1 = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR1_OFFSET);
-	cnt = (cnt1 << 32) | cnt00;
-
-	//TODO: use length?
-	printk(KERN_INFO "timer_setup_end: cnt0 = %llu\n", cnt00);
-	printk(KERN_INFO "timer_setup_end: cnt1 = %llu\n", cnt1);
-	printk(KERN_INFO "timer_setup_end: cnt = %llu\n", cnt);
 
 }
 
@@ -388,8 +373,6 @@ ssize_t timer_read(struct file *pfile, char __user *buffer, size_t length, loff_
 	cnt1 = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR1_OFFSET);
 	cnt = (cnt1 << 32) | cnt0;
 
-	//cnt = initial_value*100000 - cnt;
-	//TODO: use length?
 	printk(KERN_INFO "timer_read: cnt0 = %u\n", cnt0);
 	printk(KERN_INFO "timer_read: cnt1 = %llu\n", cnt1);
 	printk(KERN_INFO "timer_read: cnt = %llu\n", cnt);
@@ -400,7 +383,6 @@ ssize_t timer_read(struct file *pfile, char __user *buffer, size_t length, loff_
 	for(i = 0; i < 8; ++i) // alernative: put every bit in buff. BUFF_SIZE would have to be at least 64!   
 	{ 
 		buff[i] = cnt >> (i*8);
-		printk(KERN_INFO "timer_read: buff[%d] = %d\n", i, buff[i]);
 	}
 	len = 9;
 	buff[8] = 0;
@@ -430,7 +412,7 @@ ssize_t timer_write(struct file *pfile, const char __user *buffer, size_t length
 		printk(KERN_INFO "xilaxitimer_write: initial setup entered:  %llu miliseconds \n", initial_value);
 	}
 	printk(KERN_INFO "xilaxitimer_write:  initial value: %llu miliseconds \n", initial_value);
-	//millis = initial_value - millis; 
+	
 	if(ret == 3)//two parameters parsed in sscanf
 	{   
 		if (millis > initial_value)
