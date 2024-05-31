@@ -1,5 +1,5 @@
 # TODO:
-start/stop
+- fix bug when writing: reads 0, and overwrites 
 # Timer driver for zybo z7-10
 Timer driver for Zybo z7-10 board with alarm application.
 
